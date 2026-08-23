@@ -7,7 +7,7 @@
 - 🔒 **零泄漏** — 转换逻辑完全本地执行，不调用任何第三方 API
 - ⚡ **实时转换** — 每次访问订阅链接都拉取最新源订阅并即时转换
 - 📦 **多格式支持** — Clash/Mihomo、Sing-Box、V2Ray Base64、纯文本互转
-- 🌐 **全协议覆盖** — SS、VMess、VLESS、Trojan、Hysteria2、TUIC
+- 🌐 **全协议覆盖** — SS、VMess、VLESS、Trojan、Hysteria2、TUIC、AnyTLS
 - 🔗 **自定义路径** — 可自定义输出 URL 的 path，如 `/sub/my-sub`
 - 📋 **链接管理** — 查看所有已生成的转换链接，支持复制和删除
 - 🚀 **一键部署** — 基于 Cloudflare Pages + KV，零服务器成本
@@ -38,6 +38,7 @@
 - Trojan (`trojan://`)
 - Hysteria2 (`hysteria2://` / `hy2://`)
 - TUIC (`tuic://`)
+- AnyTLS (`anytls://`)
 
 ## 部署
 

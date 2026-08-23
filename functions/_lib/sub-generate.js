@@ -311,6 +311,19 @@ function nodeToClashProxy(n) {
         ...(n.alpn ? { alpn: n.alpn } : {}),
       };
 
+    case 'anytls':
+      return {
+        ...base,
+        password: n.password,
+        ...(n.sni ? { sni: n.sni } : {}),
+        ...(n.alpn ? { alpn: n.alpn } : {}),
+        ...(n.skipCertVerify ? { 'skip-cert-verify': true } : {}),
+        ...(n.fingerprint ? { 'client-fingerprint': n.fingerprint } : {}),
+        ...(n.idleSessionCheckInterval ? { 'idle-session-check-interval': n.idleSessionCheckInterval } : {}),
+        ...(n.idleSessionTimeout ? { 'idle-session-timeout': n.idleSessionTimeout } : {}),
+        ...(n.minIdleSession != null ? { 'min-idle-session': n.minIdleSession } : {}),
+      };
+
     default:
       // Pass through proxy types the engine does not model (snell, wireguard,
       // socks5, ssr, ...) so a Clash->Clash conversion doesn't silently drop them.
@@ -571,6 +584,17 @@ function nodeToSingboxOutbound(n) {
       if (n.congestionControl) tuic.congestion_control = n.congestionControl;
       if (n.udpRelayMode) tuic.udp_relay_mode = n.udpRelayMode;
       return tuic;
+
+    case 'anytls':
+      addTLS(base);
+      const anytls = {
+        ...base,
+        password: n.password,
+      };
+      if (n.idleSessionCheckInterval) anytls.idle_session_check_interval = n.idleSessionCheckInterval;
+      if (n.idleSessionTimeout) anytls.idle_session_timeout = n.idleSessionTimeout;
+      if (n.minIdleSession != null) anytls.min_idle_session = n.minIdleSession;
+      return anytls;
 
     default:
       return null;

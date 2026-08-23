@@ -1,7 +1,7 @@
 /**
  * Parse individual proxy protocol URIs into unified node objects.
  *
- * Supported protocols: ss, vmess, vless, trojan, hysteria2 (hy2), tuic
+ * Supported protocols: ss, vmess, vless, trojan, hysteria2 (hy2), tuic, anytls
  *
  * Unified node format:
  * {
@@ -47,6 +47,7 @@ export function parseURI(uri) {
     if (uri.startsWith('trojan://')) return parseTrojan(uri);
     if (uri.startsWith('hysteria2://') || uri.startsWith('hy2://')) return parseHysteria2(uri);
     if (uri.startsWith('tuic://')) return parseTUIC(uri);
+    if (uri.startsWith('anytls://')) return parseAnyTLS(uri);
     if (uri.startsWith('hysteria://')) return parseHysteria2(uri.replace('hysteria://', 'hysteria2://'));
   } catch (e) {
     console.error('Parse error for URI:', e);
@@ -72,7 +73,7 @@ function validateNode(n) {
   if (!Number.isInteger(n.port) || n.port < 1 || n.port > 65535) return null;
   if (n.type === 'vmess' || n.type === 'vless') {
     if (!n.uuid) return null;
-  } else if (n.type === 'trojan') {
+  } else if (n.type === 'trojan' || n.type === 'anytls') {
     if (!n.password) return null;
   } else if (n.type === 'ss') {
     if (!n.cipher || !n.password) return null;
@@ -377,3 +378,48 @@ function parseTUIC(uri) {
   if (!node.name) node.name = `${node.server}:${node.port}`;
   return validateNode(node);
 }
+
+/** Parse AnyTLS URI */
+function parseAnyTLS(uri) {
+  const url = new URL(uri);
+  const params = url.searchParams;
+
+  let password = url.username;
+  if (url.password) password += ':' + url.password;
+  password = decodeURIComponent(password || '');
+  if (!password && params.get('password')) {
+    password = params.get('password');
+  }
+
+  const node = {
+    type: 'anytls',
+    name: decodeName(url.hash.slice(1)),
+    server: url.hostname,
+    port: parseInt(url.port, 10) || 443,
+    password: password || '',
+    tls: 'tls',
+  };
+
+  const sni = params.get('sni') || params.get('peer');
+  if (sni) node.sni = sni;
+  if (params.get('alpn')) node.alpn = params.get('alpn').split(',');
+  const fp = params.get('fp') || params.get('fingerprint') || params.get('client-fingerprint');
+  if (fp) node.fingerprint = fp;
+  if (isTrue(params.get('insecure')) || isTrue(params.get('allowInsecure'))) node.skipCertVerify = true;
+
+  const checkInterval = params.get('idle_session_check_interval') || params.get('idle-session-check-interval');
+  if (checkInterval) node.idleSessionCheckInterval = checkInterval;
+
+  const timeout = params.get('idle_session_timeout') || params.get('idle-session-timeout');
+  if (timeout) node.idleSessionTimeout = timeout;
+
+  const minIdle = params.get('min_idle_session') || params.get('min-idle-session');
+  if (minIdle != null && minIdle !== '') {
+    const parsed = parseInt(minIdle, 10);
+    if (!isNaN(parsed)) node.minIdleSession = parsed;
+  }
+
+  if (!node.name) node.name = `${node.server}:${node.port}`;
+  return validateNode(node);
+}
+

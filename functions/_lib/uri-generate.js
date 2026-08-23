@@ -1,6 +1,6 @@
 /**
  * Generate proxy protocol URIs from unified node objects.
- * Supports: ss, vmess, vless, trojan, hysteria2, tuic
+ * Supports: ss, vmess, vless, trojan, hysteria2, tuic, anytls
  */
 
 import { b64Encode, b64UrlEncode, encodeName } from './utils.js';
@@ -21,6 +21,7 @@ export function generateURI(node) {
       case 'trojan': return genTrojan(node);
       case 'hysteria2': return genHysteria2(node);
       case 'tuic': return genTUIC(node);
+      case 'anytls': return genAnyTLS(node);
     }
   } catch (e) {
     console.error('Generate error:', e);
@@ -177,3 +178,22 @@ function genTUIC(node) {
   const password = encodeURIComponent(node.password);
   return `tuic://${uuid}:${password}@${hostOf(node.server)}:${node.port}?${params.toString()}${name}`;
 }
+
+/** Generate AnyTLS URI */
+function genAnyTLS(node) {
+  const params = new URLSearchParams();
+
+  if (node.sni) params.set('sni', node.sni);
+  if (node.alpn) params.set('alpn', Array.isArray(node.alpn) ? node.alpn.join(',') : node.alpn);
+  if (node.fingerprint) params.set('fp', node.fingerprint);
+  if (node.skipCertVerify) params.set('insecure', '1');
+  if (node.idleSessionCheckInterval) params.set('idle_session_check_interval', node.idleSessionCheckInterval);
+  if (node.idleSessionTimeout) params.set('idle_session_timeout', node.idleSessionTimeout);
+  if (node.minIdleSession != null) params.set('min_idle_session', String(node.minIdleSession));
+
+  const name = node.name ? `#${encodeName(node.name)}` : '';
+  const password = encodeURIComponent(node.password || '');
+  const queryString = params.toString() ? `?${params.toString()}` : '';
+  return `anytls://${password}@${hostOf(node.server)}:${node.port}${queryString}${name}`;
+}
+

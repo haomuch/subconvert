@@ -378,6 +378,20 @@ function clashProxyToNode(p) {
         alpn: p.alpn,
       };
 
+    case 'anytls':
+      return {
+        ...base,
+        password: p.password,
+        tls: 'tls',
+        sni: p.sni || p.servername,
+        skipCertVerify: p['skip-cert-verify'] || false,
+        alpn: p.alpn,
+        fingerprint: p['client-fingerprint'],
+        idleSessionCheckInterval: p['idle-session-check-interval'],
+        idleSessionTimeout: p['idle-session-timeout'],
+        minIdleSession: p['min-idle-session'] != null ? parseInt(String(p['min-idle-session']), 10) : undefined,
+      };
+
     default:
       // Unknown/unsupported proxy type (snell, wireguard, socks5, ssr, ...):
       // preserve the original object verbatim so it survives a Clash->Clash pass.
@@ -399,7 +413,7 @@ export function parseSingboxSub(content) {
   // url-test, load-balance, relay, direct, reject, dns, ...) is structural
   // config we preserve verbatim so a Sing-box->Sing-box conversion keeps the
   // user's proxy groups and routing rules.
-  const PROXY_TYPES = new Set(['shadowsocks', 'vmess', 'vless', 'trojan', 'hysteria2', 'tuic']);
+  const PROXY_TYPES = new Set(['shadowsocks', 'vmess', 'vless', 'trojan', 'hysteria2', 'tuic', 'anytls']);
 
   const nodes = [];
   for (const ob of doc.outbounds) {
@@ -538,6 +552,20 @@ function singboxOutboundToNode(ob) {
         congestionControl: ob.congestion_control,
         udpRelayMode: ob.udp_relay_mode,
         alpn: ob.tls?.alpn,
+      };
+
+    case 'anytls':
+      return {
+        ...base,
+        password: ob.password,
+        tls: 'tls',
+        sni: ob.tls?.server_name,
+        skipCertVerify: ob.tls?.insecure || false,
+        alpn: ob.tls?.alpn,
+        fingerprint: ob.tls?.utls?.fingerprint,
+        idleSessionCheckInterval: ob.idle_session_check_interval,
+        idleSessionTimeout: ob.idle_session_timeout,
+        minIdleSession: ob.min_idle_session,
       };
 
     default:
