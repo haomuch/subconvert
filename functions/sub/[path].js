@@ -2,8 +2,9 @@
  * GET /sub/:path - Subscription output endpoint
  *
  * Fetches the source subscription, converts to the target format,
- * and returns the result. This endpoint is hit every time a client
- * fetches the subscription URL, so it always pulls the latest source.
+ * and returns the result. Responses are cached at the edge for
+ * CACHE_TTL_SECONDS, so a source change becomes visible within that window
+ * rather than instantly.
  *
  * The conversion happens entirely on Cloudflare's edge — no third-party
  * conversion services are used, ensuring subscription data never leaves
@@ -13,6 +14,10 @@
 import { processSubscriptionRequest } from '../_lib/convert.js';
 import { incrementAccess } from '../_lib/store.js';
 import { handleCORS } from '../_lib/response.js';
+import { subscriptionCacheKey } from '../_lib/cache.js';
+
+/** 边缘缓存时长（秒）。源订阅变更最长在这个时间后可见。 */
+const CACHE_TTL_SECONDS = 300;
 
 export async function onRequestGet(context) {
   const { params, env, request } = context;
@@ -31,7 +36,7 @@ export async function onRequestGet(context) {
   // re-converting the source on every client refresh (the main cause of
   // slow loads / timeouts when the source is slow or rate-limited).
   const cache = caches.default;
-  const cacheKey = new Request(request.url);
+  const cacheKey = subscriptionCacheKey(new URL(request.url).origin, path);
   const cached = await cache.match(cacheKey);
   if (cached) {
     // Still bump the access counter in the background.
@@ -49,17 +54,10 @@ export async function onRequestGet(context) {
   // Build response with appropriate headers
   const headers = {
     'Content-Type': result.contentType,
-    // No Cache-Control header is set on purpose: every explicit value we tried
-    // was wrong for "rely solely on the server-side edge cache".
-    //  - no-store  -> Cloudflare cache.put() returns 413 and the edge cache
-    //                 silently stops working (every request re-fetches source)
-    //  - no-cache  -> edge entry has ~0 freshness, cache.match() misses next time
-    //  - max-age=N -> client and edge TTL are coupled, single-user refresh defeats it
-    // With NO cache-control directive (and no Expires), Cloudflare applies its
-    // default Edge TTL of 120 min for 200 responses, so caches.default stores a
-    // warm entry for up to ~2h. Client-side caching is left to the client; per
-    // the project's decision the client refresh interval is not something we try
-    // to control from here.
+    // 缓存 5 分钟：既避免每次访问都去回源（源订阅慢时会拖慢/拖垮服务），
+    // 又不会像默认的 2 小时边缘 TTL 那样让源订阅的变更迟迟不生效。
+    // 注意不要设 no-store —— 那会让 cache.put() 失败、边缘缓存彻底失效。
+    'Cache-Control': `public, max-age=${CACHE_TTL_SECONDS}`,
     // Allow cross-origin access
     'Access-Control-Allow-Origin': '*',
   };
@@ -86,7 +84,9 @@ export async function onRequestGet(context) {
   });
 
   // Store a clone in the cache for subsequent requests.
-  context.waitUntil(cache.put(cacheKey, response.clone()));
+  // 缓存写入失败不能影响本次响应，所以必须 catch（否则会产生未处理的
+  // Promise rejection，整个请求可能被判定为异常）。
+  context.waitUntil(cache.put(cacheKey, response.clone()).catch(() => {}));
   return response;
 }
 

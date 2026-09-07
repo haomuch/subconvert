@@ -253,8 +253,8 @@ async function handleSubmit(e) {
     return;
   }
 
-  if (customPath && !/^[a-zA-Z0-9\-_/. ]+$/.test(customPath)) {
-    toast('自定义路径仅支持英文、数字、连字符、下划线、点（空格自动转连字符），请修改或留空', 'error');
+  if (customPath && !/^[a-zA-Z0-9\-_ ]+$/.test(customPath)) {
+    toast('自定义路径仅支持英文、数字、连字符、下划线（空格自动转连字符），不支持斜杠和点，请修改或留空', 'error');
     return;
   }
 

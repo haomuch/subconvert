@@ -10,6 +10,67 @@ import { getLink, incrementAccess } from './store.js';
 /** Default User-Agent for fetching subscriptions (many providers require a specific UA) */
 const DEFAULT_UA = 'clash-verge/v2.5.1';
 
+/** 源订阅最多等 15 秒，超时就放弃，避免慢源把整个服务拖死 */
+const FETCH_TIMEOUT_MS = 15000;
+/** 源订阅最多读 5MB，避免超大响应把 Worker 内存撑爆 */
+const MAX_SUBSCRIPTION_BYTES = 5 * 1024 * 1024;
+
+/** 把字节数格式化成易读的单位（用于错误提示） */
+function formatBytes(bytes) {
+  return bytes >= 1024 * 1024
+    ? `${(bytes / 1024 / 1024).toFixed(0)}MB`
+    : `${Math.round(bytes / 1024)}KB`;
+}
+
+/**
+ * 读取响应体，并限制最大字节数。
+ * 流式累积读取，超限时立刻中断连接，而不是先把整个 body 读进内存再判断。
+ * @param {Response} resp
+ * @param {number} maxBytes
+ * @param {string} label - 用于错误提示
+ */
+async function readBodyLimited(resp, maxBytes, label) {
+  const tooLarge = () =>
+    new Error(`${label} 体积超过 ${formatBytes(maxBytes)}，已放弃读取`);
+
+  const declaredLength = resp.headers.get('content-length');
+  if (declaredLength && parseInt(declaredLength, 10) > maxBytes) {
+    throw tooLarge();
+  }
+
+  if (!resp.body) {
+    const text = await resp.text();
+    if (text.length > maxBytes) throw tooLarge();
+    return text;
+  }
+
+  const reader = resp.body.getReader();
+  const chunks = [];
+  let total = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > maxBytes) {
+        await reader.cancel().catch(() => {});
+        throw tooLarge();
+      }
+      chunks.push(value);
+    }
+  } finally {
+    try { reader.releaseLock(); } catch { /* 锁已释放或流已取消 */ }
+  }
+
+  const merged = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    merged.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return new TextDecoder().decode(merged);
+}
+
 /**
  * Fetch source subscription content.
  * @param {string} url - Source subscription URL
@@ -20,28 +81,48 @@ const DEFAULT_UA = 'clash-verge/v2.5.1';
  */
 export async function fetchSubscription(url, userAgent) {
   const ua = userAgent || DEFAULT_UA;
-  const resp = await fetch(url, {
-    headers: {
-      'User-Agent': ua,
-      'Accept': '*/*',
-      'Accept-Language': 'en-US,en;q=0.9',
-      'Accept-Encoding': 'gzip, deflate, br',
-      'Connection': 'keep-alive',
-    },
-    redirect: 'follow',
-  });
 
-  if (!resp.ok) {
-    // Try to read response body for better error diagnostics
-    let bodySnippet = '';
-    try {
-      const body = await resp.text();
-      bodySnippet = body ? ` | Body: ${body.slice(0, 200)}` : '';
-    } catch { /* ignore */ }
-    throw new Error(`Failed to fetch subscription: ${resp.status} ${resp.statusText}${bodySnippet}`);
+  // 超时覆盖"建立连接 + 读取响应体"全过程
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+
+  let resp;
+  try {
+    resp = await fetch(url, {
+      headers: {
+        'User-Agent': ua,
+        'Accept': '*/*',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Accept-Encoding': 'gzip, deflate, br',
+        'Connection': 'keep-alive',
+      },
+      redirect: 'follow',
+      signal: controller.signal,
+    });
+  } catch (e) {
+    if (e && e.name === 'AbortError') {
+      throw new Error(`获取源订阅超时（超过 ${FETCH_TIMEOUT_MS / 1000} 秒）`);
+    }
+    throw new Error(`无法连接源订阅：${e && e.message ? e.message : e}`);
   }
 
-  const content = await resp.text();
+  let content;
+  try {
+    if (!resp.ok) {
+      // 读取一小段响应体用于诊断，同样限量
+      let bodySnippet = '';
+      try {
+        const body = await readBodyLimited(resp, 2048, '错误响应');
+        bodySnippet = body ? ` | Body: ${body.slice(0, 200)}` : '';
+      } catch { /* 响应体读不到就算了，不影响主错误信息 */ }
+      throw new Error(`Failed to fetch subscription: ${resp.status} ${resp.statusText}${bodySnippet}`);
+    }
+
+    content = await readBodyLimited(resp, MAX_SUBSCRIPTION_BYTES, '源订阅');
+  } finally {
+    clearTimeout(timer);
+  }
+
   if (!content || !content.trim()) {
     throw new Error('Subscription content is empty');
   }

@@ -12,6 +12,7 @@
 import { listLinks, deleteLink } from '../_lib/store.js';
 import { json, error, handleCORS } from '../_lib/response.js';
 import { checkAuth } from '../_lib/auth.js';
+import { subscriptionCacheKey } from '../_lib/cache.js';
 
 export async function onRequestGet(context) {
   const { request, env } = context;
@@ -61,6 +62,13 @@ export async function onRequestDelete(context) {
   if (!deleted) {
     return error('Link not found', 404);
   }
+
+  // 清掉边缘缓存，否则删掉的链接在缓存过期前仍然能返回订阅内容。
+  // 注意：边缘缓存是按数据中心分布的，这里只能清理当前数据中心的那份，
+  // 其他边缘节点上的副本仍会存活到 TTL 到期（最多 CACHE_TTL_SECONDS）。
+  try {
+    await caches.default.delete(subscriptionCacheKey(url.origin, path));
+  } catch { /* 清缓存失败不影响删除结果 */ }
 
   return json({ success: true, deleted: path });
 }

@@ -72,9 +72,11 @@ export async function onRequestPost(context) {
 
   // Reject unsupported characters explicitly instead of silently
   // generating a random path. Spaces are allowed (auto → hyphen).
-  if (rawPath && !/^[a-zA-Z0-9\-_/. ]+$/.test(rawPath)) {
+  // 不允许 "/"（路由只有单段，含斜杠的链接必然 404）和 "."（会产生
+  // "." / ".." 这类畸形路径，浏览器还会对 URL 做规范化，导致链接对不上）。
+  if (rawPath && !/^[a-zA-Z0-9\-_ ]+$/.test(rawPath)) {
     return error(
-      '自定义路径仅支持英文、数字、连字符、下划线、点（空格会自动转为连字符）；包含不支持的字符，请修改或留空由系统自动生成',
+      '自定义路径仅支持英文、数字、连字符、下划线（空格会自动转为连字符）；不支持斜杠和点，请修改或留空由系统自动生成',
       400
     );
   }
@@ -89,13 +91,18 @@ export async function onRequestPost(context) {
   }
 
   // Create the link
-  const link = await createLink(env.SUBCONVERT_KV, {
-    sourceUrl,
-    targetFormat,
-    customPath: path,
-    name: name || '',
-    userAgent: userAgent || '',
-  });
+  let link;
+  try {
+    link = await createLink(env.SUBCONVERT_KV, {
+      sourceUrl,
+      targetFormat,
+      customPath: path,
+      name: name || '',
+      userAgent: userAgent || '',
+    });
+  } catch (e) {
+    return error(e.message || 'Failed to create link', 400);
+  }
 
   // Build the subscription URL
   const url = new URL(request.url);

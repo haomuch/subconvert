@@ -80,8 +80,10 @@ export function sanitizePath(path) {
   if (!path) return '';
   // Remove leading/trailing slashes, keep only safe characters
   let cleaned = path.replace(/^\/+|\/+$/g, '');
-  // Replace spaces with hyphens, remove dangerous characters
-  cleaned = cleaned.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9\-_/.]/g, '');
+  // Replace spaces with hyphens, remove dangerous characters.
+  // 不允许 "/" 和 "."：前者让生成的 URL 多出一级路由而必然 404，
+  // 后者会产生 "." / ".." 这类畸形路径。
+  cleaned = cleaned.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9\-_]/g, '');
   return cleaned;
 }
 
