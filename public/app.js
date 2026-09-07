@@ -44,6 +44,12 @@ async function fetchWithAuth(url, options = {}) {
     handleUnauthorized();
     throw new Error('访问密码错误或已失效');
   }
+  if (resp.status === 429) {
+    // 密码连续输错被服务端临时锁定。这里不要走"重新输入密码"的流程，
+    // 因为锁定期内输入什么都会被拒。
+    const data = await resp.json().catch(() => ({}));
+    throw new Error(data.error || '操作过于频繁，请稍后再试');
+  }
   return resp;
 }
 

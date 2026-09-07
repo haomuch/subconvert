@@ -71,6 +71,7 @@ npm run dev
 在 Cloudflare Dashboard 的项目 **Settings → Environment variables** 中添加变量 `ACCESS_PASSWORD` 并重新部署即可。
 
 - 未设置时，首页公开访问。
+- **失败限流**：同一 IP 连续输错密码 5 次会被锁定 10 分钟。计数存放在服务端 KV，刷新页面、换浏览器、开无痕窗口都绕不过去。
 - 密码仅保护首页及管理接口；已生成的 `/sub/:path` 链接始终免密公开，便于客户端订阅。
 - 本地开发可在根目录创建 `.dev.vars` 写入 `ACCESS_PASSWORD`。
 

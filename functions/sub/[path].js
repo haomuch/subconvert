@@ -58,8 +58,8 @@ export async function onRequestGet(context) {
     // 又不会像默认的 2 小时边缘 TTL 那样让源订阅的变更迟迟不生效。
     // 注意不要设 no-store —— 那会让 cache.put() 失败、边缘缓存彻底失效。
     'Cache-Control': `public, max-age=${CACHE_TTL_SECONDS}`,
-    // Allow cross-origin access
-    'Access-Control-Allow-Origin': '*',
+    // 不输出 Access-Control-Allow-Origin：不开放跨域，避免第三方网页的
+    // 脚本把订阅内容读走。代理客户端（Clash 等）不是浏览器，不受影响。
   };
 
   // Subscription-Userinfo: forwarded verbatim from the source subscription so the

@@ -11,15 +11,27 @@
 
 import { listLinks, deleteLink } from '../_lib/store.js';
 import { json, error, handleCORS } from '../_lib/response.js';
-import { checkAuth } from '../_lib/auth.js';
+import { authenticate } from '../_lib/auth.js';
 import { subscriptionCacheKey } from '../_lib/cache.js';
+
+/** 鉴权失败时的统一响应（含限流锁定提示） */
+function authError(auth) {
+  if (auth.reason === 'locked') {
+    return error(
+      `密码错误次数过多，请 ${Math.ceil(auth.retryAfter / 60)} 分钟后再试`,
+      429,
+      { 'Retry-After': String(auth.retryAfter) }
+    );
+  }
+  return error('Unauthorized: 访问密码错误或缺失', 401);
+}
 
 export async function onRequestGet(context) {
   const { request, env } = context;
 
-  const auth = checkAuth(request, env);
+  const auth = await authenticate(request, env);
   if (!auth.ok) {
-    return error('Unauthorized: 访问密码错误或缺失', 401);
+    return authError(auth);
   }
 
   if (!env.SUBCONVERT_KV) {
@@ -42,9 +54,9 @@ export async function onRequestGet(context) {
 export async function onRequestDelete(context) {
   const { request, env } = context;
 
-  const auth = checkAuth(request, env);
+  const auth = await authenticate(request, env);
   if (!auth.ok) {
-    return error('Unauthorized: 访问密码错误或缺失', 401);
+    return authError(auth);
   }
 
   if (!env.SUBCONVERT_KV) {

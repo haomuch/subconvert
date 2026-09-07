@@ -3,7 +3,7 @@
  * POST /api/auth - Verify provided password
  */
 
-import { checkAuth, getAuthConfig } from '../_lib/auth.js';
+import { checkAuth, authenticate, getAuthConfig } from '../_lib/auth.js';
 import { json, error, handleCORS } from '../_lib/response.js';
 
 export async function onRequestGet(context) {
@@ -32,12 +32,19 @@ export async function onRequestPost(context) {
     // Body is optional if password is passed via header
   }
 
-  const headerPassword = request.headers.get('X-Access-Password') || '';
-  const bodyPassword = body.password || '';
-  const provided = (headerPassword || bodyPassword).trim();
+  // 用带限流的鉴权：失败会计入该 IP 的失败次数，达到阈值即锁定
+  const auth = await authenticate(request, env, body.password);
 
-  if (provided === config.password) {
+  if (auth.ok) {
     return json({ required: true, authenticated: true });
+  }
+
+  if (auth.reason === 'locked') {
+    return error(
+      `密码错误次数过多，请 ${Math.ceil(auth.retryAfter / 60)} 分钟后再试`,
+      429,
+      { 'Retry-After': String(auth.retryAfter) }
+    );
   }
 
   return error('访问密码错误', 401);
