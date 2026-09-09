@@ -12,7 +12,6 @@
  */
 
 import { processSubscriptionRequest } from '../_lib/convert.js';
-import { incrementAccess } from '../_lib/store.js';
 import { handleCORS } from '../_lib/response.js';
 import { subscriptionCacheKey } from '../_lib/cache.js';
 
@@ -39,8 +38,6 @@ export async function onRequestGet(context) {
   const cacheKey = subscriptionCacheKey(new URL(request.url).origin, path);
   const cached = await cache.match(cacheKey);
   if (cached) {
-    // Still bump the access counter in the background.
-    context.waitUntil(incrementAccess(env.SUBCONVERT_KV, path));
     return cached;
   }
 

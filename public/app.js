@@ -94,25 +94,32 @@ function setAuthLoading(loading) {
 async function checkAuthStatus() {
   try {
     const resp = await fetch(API.auth, { headers: getAuthHeaders() });
-    const data = await resp.json();
+    const data = await resp.json().catch(() => ({}));
 
-    if (!data.required) {
-      // Backend does not require authentication
-      hideAuthModal();
-      $('#btnLogout').hidden = true;
-      return true;
-    }
-
-    // Backend requires authentication
-    $('#btnLogout').hidden = false;
-
-    if (data.authenticated) {
-      hideAuthModal();
-      return true;
-    } else {
+    // 401 / 429 的响应体里没有 required 字段，绝不能当成"无需密码"放过：
+    // 那是"带的密码不对"或"已被锁定"。
+    if (!resp.ok) {
       showAuthModal();
       return false;
     }
+
+    if (data.required === true) {
+      // Backend requires authentication
+      $('#btnLogout').hidden = false;
+
+      if (data.authenticated) {
+        hideAuthModal();
+        return true;
+      } else {
+        showAuthModal();
+        return false;
+      }
+    }
+
+    // Backend does not require authentication
+    hideAuthModal();
+    $('#btnLogout').hidden = true;
+    return true;
   } catch (err) {
     console.error('Failed to check auth status:', err);
     return true;
@@ -203,10 +210,15 @@ function toast(message, type = 'info', title = '') {
   setTimeout(remove, 4000);
 }
 
+/**
+ * 转义后用于 innerHTML（含属性值）。
+ * 必须自己替换引号：textContent → innerHTML 只会转义 & < >，
+ * 双引号原样透出，塞进 title="..." 这类属性里会被闭合、注入事件处理器。
+ */
+const HTML_ESCAPES = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+
 function escapeHtml(str) {
-  const div = document.createElement('div');
-  div.textContent = str;
-  return div.innerHTML;
+  return String(str ?? '').replace(/[&<>"']/g, c => HTML_ESCAPES[c]);
 }
 
 // ─── API Calls ────────────────────────────────────────────
@@ -371,7 +383,7 @@ function buildRowInner(link) {
       <div class="cell-name"><a class="cell-path-link" href="${escapeHtml(link.subscriptionUrl)}" target="_blank" rel="noopener noreferrer" title="${escapeHtml(link.subscriptionUrl)}">${escapeHtml(link.customPath)}</a></div>
     </td>
     <td class="cell-url" title="${escapeHtml(link.sourceUrl)}">${escapeHtml(link.sourceUrl)}</td>
-    <td><span class="cell-format">${FORMAT_LABELS[link.targetFormat] || link.targetFormat}</span></td>
+    <td><span class="cell-format">${escapeHtml(FORMAT_LABELS[link.targetFormat] || link.targetFormat)}</span></td>
     <td>
       <div class="cell-actions">
         <button class="btn-icon" data-action="copy" data-url="${escapeHtml(link.subscriptionUrl)}" title="复制订阅链接">

@@ -3,18 +3,40 @@
  * POST /api/auth - Verify provided password
  */
 
-import { checkAuth, authenticate, getAuthConfig } from '../_lib/auth.js';
+import { authenticate, getAuthConfig, getProvidedPassword } from '../_lib/auth.js';
 import { json, error, handleCORS } from '../_lib/response.js';
 
 export async function onRequestGet(context) {
   const { request, env } = context;
   const config = getAuthConfig(env);
-  const authResult = checkAuth(request, env);
 
-  return json({
-    required: config.required,
-    authenticated: authResult.ok,
-  });
+  if (!config.required) {
+    return json({ required: false, authenticated: true });
+  }
+
+  // 没带密码只是前端首屏在问"要不要弹登录框"，不能算一次失败 —— 否则
+  // 每刷新一次页面就白白消耗一次重试机会。
+  // 但带了密码就必须走限流校验：否则这个接口就是 POST /api/auth 的
+  // 免限制旁路，可以无限次撞密码。
+  if (!getProvidedPassword(request)) {
+    return json({ required: true, authenticated: false });
+  }
+
+  const auth = await authenticate(request, env);
+
+  if (auth.ok) {
+    return json({ required: true, authenticated: true });
+  }
+
+  if (auth.reason === 'locked') {
+    return error(
+      `密码错误次数过多，请 ${Math.ceil(auth.retryAfter / 60)} 分钟后再试`,
+      429,
+      { 'Retry-After': String(auth.retryAfter) }
+    );
+  }
+
+  return error('访问密码错误', 401);
 }
 
 export async function onRequestPost(context) {

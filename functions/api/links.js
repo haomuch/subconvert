@@ -3,7 +3,7 @@
  * DELETE /api/links    - Delete a link by path (query: ?path=xxx)
  *
  * GET response:
- *   { "links": [ { id, sourceUrl, targetFormat, customPath, name, createdAt, accessCount, lastAccessed } ] }
+ *   { "links": [ { id, sourceUrl, targetFormat, customPath, name, createdAt } ] }
  *
  * DELETE response:
  *   { "success": true, "deleted": "path" }

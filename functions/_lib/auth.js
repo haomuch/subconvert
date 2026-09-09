@@ -17,6 +17,24 @@ export function getAuthConfig(env) {
 }
 
 /**
+ * 取出请求里携带的密码（没有则返回空串）。
+ * 单独抽出来是因为有些接口需要区分"根本没带密码"和"带了但不对"：
+ * 前者只是状态查询，不能算一次失败。
+ * @param {Request} request
+ * @param {string} [bodyPassword] - 可选：请求体里传来的密码（仅 POST /api/auth 用到）
+ */
+export function getProvidedPassword(request, bodyPassword) {
+  const customHeader = request.headers.get('X-Access-Password') || '';
+  if (customHeader) return customHeader.trim();
+
+  const authHeader = request.headers.get('Authorization') || '';
+  if (authHeader.toLowerCase().startsWith('bearer ')) return authHeader.substring(7).trim();
+
+  if (bodyPassword) return String(bodyPassword).trim();
+  return '';
+}
+
+/**
  * Verify request authentication against configured password
  * @param {Request} request
  * @param {object} env
@@ -28,17 +46,7 @@ export function checkAuth(request, env, bodyPassword) {
     return { ok: true, required: false };
   }
 
-  const authHeader = request.headers.get('Authorization') || '';
-  const customHeader = request.headers.get('X-Access-Password') || '';
-
-  let providedPassword = '';
-  if (customHeader) {
-    providedPassword = customHeader.trim();
-  } else if (authHeader.toLowerCase().startsWith('bearer ')) {
-    providedPassword = authHeader.substring(7).trim();
-  } else if (bodyPassword) {
-    providedPassword = String(bodyPassword).trim();
-  }
+  const providedPassword = getProvidedPassword(request, bodyPassword);
 
   if (providedPassword === password) {
     return { ok: true, required: true };

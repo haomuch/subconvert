@@ -22,7 +22,7 @@
  */
 
 import { createLink, pathExists } from '../_lib/store.js';
-import { sanitizePath, generateId } from '../_lib/utils.js';
+import { sanitizePath, generateId, validatePublicUrl } from '../_lib/utils.js';
 import { json, error, handleCORS } from '../_lib/response.js';
 import { authenticate } from '../_lib/auth.js';
 
@@ -61,11 +61,30 @@ export async function onRequestPost(context) {
     return error('sourceUrl is required');
   }
 
+  // 长度上限：所有链接都存在单个 KV value 里，超限会撑爆 25MB 上限、
+  // 让全部链接一起失效。
+  if (sourceUrl.length > 2048) {
+    return error('sourceUrl 过长（上限 2048 字符）', 400);
+  }
+  if (typeof name === 'string' && name.length > 200) {
+    return error('name 过长（上限 200 字符）', 400);
+  }
+  if (typeof userAgent === 'string' && userAgent.length > 512) {
+    return error('userAgent 过长（上限 512 字符）', 400);
+  }
+
   // Validate URL format
   try {
     new URL(sourceUrl);
   } catch {
     return error('sourceUrl is not a valid URL');
+  }
+
+  // SSRF 防护：服务端会去抓这个地址，必须限制为公网 http(s)。
+  // 抓取时（fetchSubscription）还会对重定向的每一跳再校验一次。
+  const guard = validatePublicUrl(sourceUrl);
+  if (!guard.ok) {
+    return error(`sourceUrl 不允许：${guard.reason}`, 400);
   }
 
   // Validate target format

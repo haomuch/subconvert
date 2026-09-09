@@ -99,7 +99,6 @@ export async function createLink(kv, link) {
     name: link.name || '',
     userAgent: link.userAgent || '',
     createdAt: now,
-    accessCount: 0,
   };
 
   links.push(record);
@@ -147,24 +146,6 @@ export async function deleteLink(kv, path) {
   await kv.delete(PREFIX + path).catch(() => {});
   await kv.delete(META_PREFIX + path).catch(() => {});
   return true;
-}
-
-/**
- * Increment the access count for a link.
- * 注意：KV 没有事务，并发写入可能互相覆盖（计数丢失）。访问计数属于
- * 统计性质，接受偶发不准；不影响订阅链接本身的可用性。
- * @param {KVNamespace} kv
- * @param {string} path
- */
-export async function incrementAccess(kv, path) {
-  try {
-    const links = await loadAll(kv);
-    const link = links.find(l => l && l.customPath === path);
-    if (!link) return;
-    link.accessCount = (link.accessCount || 0) + 1;
-    link.lastAccessed = Date.now();
-    await saveAll(kv, links);
-  } catch { /* 统计失败不影响主流程 */ }
 }
 
 /**

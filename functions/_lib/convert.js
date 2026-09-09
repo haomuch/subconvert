@@ -5,15 +5,18 @@
 
 import { parseSubscription } from './sub-parse.js';
 import { generateSubscription } from './sub-generate.js';
-import { getLink, incrementAccess } from './store.js';
+import { getLink } from './store.js';
+import { validatePublicUrl } from './utils.js';
 
 /** Default User-Agent for fetching subscriptions (many providers require a specific UA) */
 const DEFAULT_UA = 'clash-verge/v2.5.1';
 
-/** 源订阅最多等 15 秒，超时就放弃，避免慢源把整个服务拖死 */
+/** 源订阅最多等 15 秒，超时就放弃，避免慢源把整个服务拖死（含读取响应体） */
 const FETCH_TIMEOUT_MS = 15000;
 /** 源订阅最多读 5MB，避免超大响应把 Worker 内存撑爆 */
 const MAX_SUBSCRIPTION_BYTES = 5 * 1024 * 1024;
+/** 手动跟随重定向的上限。用 'follow' 的话中间每一跳都拦不住，SSRF 防护等于虚设。 */
+const MAX_REDIRECTS = 5;
 
 /** 把字节数格式化成易读的单位（用于错误提示） */
 function formatBytes(bytes) {
@@ -71,6 +74,28 @@ async function readBodyLimited(resp, maxBytes, label) {
   return new TextDecoder().decode(merged);
 }
 
+/** 发一次（不自动跟随重定向）请求，把网络层异常翻成可读的中文错误 */
+async function fetchOnce(url, ua, signal) {
+  try {
+    return await fetch(url, {
+      headers: {
+        'User-Agent': ua,
+        'Accept': '*/*',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Accept-Encoding': 'gzip, deflate, br',
+        'Connection': 'keep-alive',
+      },
+      redirect: 'manual',
+      signal,
+    });
+  } catch (e) {
+    if (e && e.name === 'AbortError') {
+      throw new Error(`获取源订阅超时（超过 ${FETCH_TIMEOUT_MS / 1000} 秒）`);
+    }
+    throw new Error(`无法连接源订阅：${e && e.message ? e.message : e}`);
+  }
+}
+
 /**
  * Fetch source subscription content.
  * @param {string} url - Source subscription URL
@@ -82,45 +107,49 @@ async function readBodyLimited(resp, maxBytes, label) {
 export async function fetchSubscription(url, userAgent) {
   const ua = userAgent || DEFAULT_UA;
 
-  // 超时覆盖"建立连接 + 读取响应体"全过程
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
-
+  let target = url;
   let resp;
-  try {
-    resp = await fetch(url, {
-      headers: {
-        'User-Agent': ua,
-        'Accept': '*/*',
-        'Accept-Language': 'en-US,en;q=0.9',
-        'Accept-Encoding': 'gzip, deflate, br',
-        'Connection': 'keep-alive',
-      },
-      redirect: 'follow',
-      signal: controller.signal,
-    });
-  } catch (e) {
-    if (e && e.name === 'AbortError') {
-      throw new Error(`获取源订阅超时（超过 ${FETCH_TIMEOUT_MS / 1000} 秒）`);
-    }
-    throw new Error(`无法连接源订阅：${e && e.message ? e.message : e}`);
-  }
-
   let content;
-  try {
-    if (!resp.ok) {
-      // 读取一小段响应体用于诊断，同样限量
-      let bodySnippet = '';
-      try {
-        const body = await readBodyLimited(resp, 2048, '错误响应');
-        bodySnippet = body ? ` | Body: ${body.slice(0, 200)}` : '';
-      } catch { /* 响应体读不到就算了，不影响主错误信息 */ }
-      throw new Error(`Failed to fetch subscription: ${resp.status} ${resp.statusText}${bodySnippet}`);
+
+  // 每一跳都重新做地址校验：redirect: 'follow' 会让源站把请求导到内网而
+  // 我们看不到，所以改成手动跟随并对 Location 再校验一次。
+  for (let hop = 0; ; hop++) {
+    const guard = validatePublicUrl(target);
+    if (!guard.ok) {
+      throw new Error(`源订阅地址不被允许：${guard.reason}`);
     }
 
-    content = await readBodyLimited(resp, MAX_SUBSCRIPTION_BYTES, '源订阅');
-  } finally {
-    clearTimeout(timer);
+    // 超时覆盖"建立连接 + 读取响应体"全过程
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+    try {
+      resp = await fetchOnce(guard.url.href, ua, controller.signal);
+
+      const location = resp.headers.get('location');
+      if (resp.status >= 300 && resp.status < 400 && location) {
+        if (hop >= MAX_REDIRECTS) {
+          throw new Error(`源订阅重定向次数超过 ${MAX_REDIRECTS} 次`);
+        }
+        target = new URL(location, guard.url).href;
+        continue;
+      }
+
+      // 不回显上游响应体：那会变成一个探测内网服务的回显通道，
+      // 状态码本身已经够排障了。
+      if (!resp.ok) {
+        throw new Error(`Failed to fetch subscription: ${resp.status} ${resp.statusText}`);
+      }
+
+      content = await readBodyLimited(resp, MAX_SUBSCRIPTION_BYTES, '源订阅');
+    } catch (e) {
+      if (e && e.name === 'AbortError') {
+        throw new Error(`获取源订阅超时（超过 ${FETCH_TIMEOUT_MS / 1000} 秒）`);
+      }
+      throw e;
+    } finally {
+      clearTimeout(timer);
+    }
+    break;
   }
 
   if (!content || !content.trim()) {
@@ -170,7 +199,11 @@ export function convertSubscription(content, targetFormat, options = {}) {
 
 /**
  * Full conversion pipeline: fetch → parse → convert.
- * Fetches the source subscription, converts to target format, and updates access count.
+ * Fetches the source subscription and converts it to the target format.
+ *
+ * 这里刻意不写任何 KV：订阅链接是高频只读路径，任何对 links:all 的写入
+ * 都要"读全量 → 改一条 → 写回全量"，而 KV 既没有事务又是最终一致的，
+ * 并发下会整份覆盖，把刚创建的链接丢掉。
  *
  * @param {KVNamespace} kv
  * @param {string} path - Custom path of the link
@@ -201,10 +234,6 @@ export async function processSubscriptionRequest(kv, path) {
   } catch (e) {
     return { error: 500, message: `Conversion failed: ${e.message}` };
   }
-
-  // Update access count (must await — Cloudflare runtime may terminate
-  // the worker before unawaited promises complete)
-  await incrementAccess(kv, path);
 
   return {
     content: result.content,
